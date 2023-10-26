@@ -115,6 +115,104 @@ func (r *Request) GetVerifyWebSocket() VerifyWebSocket {
 	return verify
 }
 
+// NewSignRequest 生成验签请求结构体
+// url 压测的url
+// verify 验证方法 在server/verify中 http 支持:statusCode、json webSocket支持:json
+// secret 签名秘钥
+// timeout 请求超时时间
+// debug 是否开启debug
+// path curl文件路径 http接口压测，自定义参数设置
+func NewSignRequest(url string, verify string, code int, timeout time.Duration, debug bool, path string, reqHeaders []string, secret string,
+	reqBody string, maxCon int, http2 bool, keepalive bool) (request *Request, err error) {
+	var (
+		method  = "GET"
+		headers = make(map[string]string)
+		body    string
+	)
+	if path != "" {
+		var curl *CURL
+		curl, err = ParseTheFile(path)
+		if err != nil {
+			return nil, err
+		}
+		if url == "" {
+			url = curl.GetURL()
+		}
+		method = curl.GetMethod()
+		headers = curl.GetHeaders()
+		body = curl.GetBody()
+	} else {
+		if reqBody != "" {
+			method = "POST"
+			body = reqBody
+		}
+		for _, v := range reqHeaders {
+			getHeaderValue(v, headers)
+		}
+		if _, ok := headers["Content-Type"]; !ok {
+			headers["Content-Type"] = "application/x-www-form-urlencoded; charset=utf-8"
+		}
+	}
+	form := ""
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		form = FormTypeHTTP
+	} else if strings.HasPrefix(url, "ws://") || strings.HasPrefix(url, "wss://") {
+		form = FormTypeWebSocket
+	} else if strings.HasPrefix(url, "grpc://") || strings.HasPrefix(url, "rpc://") {
+		form = FormTypeGRPC
+	} else {
+		form = FormTypeHTTP
+		url = fmt.Sprintf("http://%s", url)
+	}
+	if form == "" {
+		err = fmt.Errorf("url:%s 不合法,必须是完整http、webSocket连接", url)
+		return
+	}
+	var ok bool
+	switch form {
+	case FormTypeHTTP:
+		// verify
+		if verify == "" {
+			verify = "statusCode"
+		}
+		key := fmt.Sprintf("%s.%s", form, verify)
+		_, ok = verifyMapHTTP[key]
+		if !ok {
+			err = errors.New("验证器不存在:" + key)
+			return
+		}
+	case FormTypeWebSocket:
+		// verify
+		if verify == "" {
+			verify = "json"
+		}
+		key := fmt.Sprintf("%s.%s", form, verify)
+		_, ok = verifyMapWebSocket[key]
+		if !ok {
+			err = errors.New("验证器不存在:" + key)
+			return
+		}
+	}
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	request = &Request{
+		URL:       url,
+		Form:      form,
+		Method:    strings.ToUpper(method),
+		Headers:   headers,
+		Body:      body,
+		Verify:    verify,
+		Timeout:   timeout,
+		Debug:     debug,
+		MaxCon:    maxCon,
+		HTTP2:     http2,
+		Keepalive: keepalive,
+		Code:      code,
+	}
+	return
+}
+
 // NewRequest 生成请求结构体
 // url 压测的url
 // verify 验证方法 在server/verify中 http 支持:statusCode、json webSocket支持:json
