@@ -2,8 +2,12 @@
 package model
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"net/http"
 	"strings"
@@ -122,13 +126,15 @@ func (r *Request) GetVerifyWebSocket() VerifyWebSocket {
 // timeout 请求超时时间
 // debug 是否开启debug
 // path curl文件路径 http接口压测，自定义参数设置
-func NewSignRequest(url string, verify string, code int, timeout time.Duration, debug bool, path string, reqHeaders []string, secret string,
-	reqBody string, maxCon int, http2 bool, keepalive bool) (request *Request, err error) {
+func NewSignRequest(totalNumber uint64, path string, url string, verify string, code int, timeout time.Duration, debug bool, reqHeaders []string, partnerId string, secret string,
+	reqBody map[string]interface{}, maxCon int, http2 bool, keepalive bool) (request []*Request, err error) {
 	var (
-		method  = "GET"
+		method  = "POST"
 		headers = make(map[string]string)
-		body    string
 	)
+	var wg sync.WaitGroup
+	slice := make([]*Request, 0)
+	ch := make(chan *Request)
 	if path != "" {
 		var curl *CURL
 		curl, err = ParseTheFile(path)
@@ -140,18 +146,21 @@ func NewSignRequest(url string, verify string, code int, timeout time.Duration, 
 		}
 		method = curl.GetMethod()
 		headers = curl.GetHeaders()
-		body = curl.GetBody()
-	} else {
-		if reqBody != "" {
-			method = "POST"
-			body = reqBody
+		bodyString := curl.GetBody()
+		errJ := json.Unmarshal([]byte(bodyString), &reqBody)
+		if errJ != nil {
+			fmt.Printf("解析JSON时出错：%v\n%v\n", bodyString, errJ)
+			return
 		}
-		for _, v := range reqHeaders {
-			getHeaderValue(v, headers)
-		}
-		if _, ok := headers["Content-Type"]; !ok {
-			headers["Content-Type"] = "application/x-www-form-urlencoded; charset=utf-8"
-		}
+	}
+	for _, v := range reqHeaders {
+		getHeaderValue(v, headers)
+	}
+	if _, ok := headers["Content-Type"]; !ok {
+		headers["Content-Type"] = "application/json"
+	}
+	if timeout == 0 {
+		timeout = 30 * time.Second
 	}
 	form := ""
 	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
@@ -193,24 +202,64 @@ func NewSignRequest(url string, verify string, code int, timeout time.Duration, 
 			return
 		}
 	}
-	if timeout == 0 {
-		timeout = 30 * time.Second
+	go func() {
+		defer close(ch)
+		for i := range ch {
+			slice = append(slice, i)
+		}
+	}()
+
+	for i := uint64(0); i < totalNumber; i++ {
+		wg.Add(1)
+		go func(i uint64) {
+			defer wg.Done()
+			uid := uuid.New().String()
+			times := time.Now().Unix()
+			timestampStr := fmt.Sprintf("%d", times)
+			restRequest := restRequest{
+				Req: reqBody,
+				RequestContext: restRequestContext{
+					PartnerId: partnerId,
+					Serial:    uid,
+					Timestamp: timestampStr,
+				},
+			}
+			bByte, err := json.Marshal(restRequest)
+			if err != nil {
+				err = errors.New("请求体转换错误")
+				return
+			}
+			hashStr := "req=" + string(bByte) + "&key=" + secret
+			hash := sha256.New()
+			hash.Write([]byte(hashStr))
+			hashValue := hash.Sum(nil)
+			hashString := hex.EncodeToString(hashValue)
+			newUrl := ""
+			if strings.Contains(url, "?") {
+				newUrl = url + "&sign=" + hashString
+			} else {
+				newUrl = url + "?sign=" + hashString
+			}
+			req := &Request{
+				URL:       newUrl,
+				Form:      form,
+				Method:    strings.ToUpper(method),
+				Headers:   headers,
+				Body:      string(bByte),
+				Verify:    verify,
+				Timeout:   timeout,
+				Debug:     debug,
+				MaxCon:    maxCon,
+				HTTP2:     http2,
+				Keepalive: keepalive,
+				Code:      code,
+			}
+			ch <- req
+		}(i)
 	}
-	request = &Request{
-		URL:       url,
-		Form:      form,
-		Method:    strings.ToUpper(method),
-		Headers:   headers,
-		Body:      body,
-		Verify:    verify,
-		Timeout:   timeout,
-		Debug:     debug,
-		MaxCon:    maxCon,
-		HTTP2:     http2,
-		Keepalive: keepalive,
-		Code:      code,
-	}
-	return
+
+	wg.Wait()
+	return slice, nil
 }
 
 // NewRequest 生成请求结构体

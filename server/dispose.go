@@ -30,13 +30,19 @@ func init() {
 }
 
 // Dispose 处理函数
-func Dispose(concurrency, totalNumber uint64, request *model.Request) {
+func Dispose(concurrency, totalNumber uint64, request *model.Request, requestList []*model.Request) {
 	// 设置接收数据缓存
 	ch := make(chan *model.RequestResults, 1000)
 	var (
 		wg          sync.WaitGroup // 发送数据完成
 		wgReceiving sync.WaitGroup // 数据处理完成
 	)
+
+	//数组形式时，用第一个请求建立链接 默认全部为同样的地址
+	if request == nil {
+		request = requestList[0]
+	}
+
 	wgReceiving.Add(1)
 	go statistics.ReceivingResults(concurrency, ch, &wgReceiving)
 
@@ -48,7 +54,8 @@ func Dispose(concurrency, totalNumber uint64, request *model.Request) {
 		wg.Add(1)
 		switch request.Form {
 		case model.FormTypeHTTP:
-			go golink.HTTP(i, ch, totalNumber, &wg, request)
+			go golink.HTTP(i, ch, totalNumber, &wg, request, requestList)
+			break
 		case model.FormTypeWebSocket:
 			switch connectionMode {
 			case 1:
@@ -74,6 +81,7 @@ func Dispose(concurrency, totalNumber uint64, request *model.Request) {
 				}(i)
 				// 注意:时间间隔太短会出现连接失败的报错 默认连接时长:20毫秒(公网连接)
 				time.Sleep(5 * time.Millisecond)
+				break
 			default:
 				data := fmt.Sprintf("不支持的类型:%d", connectionMode)
 				panic(data)

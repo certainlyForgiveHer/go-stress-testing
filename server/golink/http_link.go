@@ -11,7 +11,7 @@ import (
 
 // HTTP 请求
 func HTTP(chanID uint64, ch chan<- *model.RequestResults, totalNumber uint64, wg *sync.WaitGroup,
-	request *model.Request) {
+	request *model.Request, requestList []*model.Request) {
 	defer func() {
 		wg.Done()
 	}()

@@ -2,13 +2,13 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
-	"runtime"
-	"strings"
-
 	"go-stress-testing/model"
 	"go-stress-testing/server"
+	"runtime"
+	"strings"
 )
 
 // array 自定义数组参数
@@ -39,6 +39,9 @@ var (
 	code        = 200             //成功状态码
 	http2       = false           // 是否开http2.0
 	keepalive   = false           // 是否开启长连接
+	sign        = "false"
+	partnerId   = ""
+	secretStr   = ""
 )
 
 func init() {
@@ -54,31 +57,56 @@ func init() {
 	flag.IntVar(&code, "code", code, "请求成功的状态码")
 	flag.BoolVar(&http2, "http2", http2, "是否开http2.0")
 	flag.BoolVar(&keepalive, "k", keepalive, "是否开启长连接")
+	flag.StringVar(&partnerId, "partner", partnerId, "合作方编号")
+	flag.StringVar(&secretStr, "secret", secretStr, "秘钥")
+	flag.StringVar(&sign, "sign", sign, "是否为验签请求")
 	// 解析参数
 	flag.Parse()
 }
 
 // main go 实现的压测工具
 // 编译可执行文件
+//
 //go:generate go build main.go
 func main() {
 	runtime.GOMAXPROCS(1)
 	if concurrency == 0 || totalNumber == 0 || (requestURL == "" && path == "") {
-		fmt.Printf("示例: go run main.go -c 1 -n 1 -u https://www.baidu.com/ \n")
+		fmt.Printf("示例: go run main.go -c 1 -n 1 -u -sign -d -partner CRM -secret 0cb4521f6723215fec1s4f9f9a756y31 https://www.baidu.com/ \n")
 		fmt.Printf("压测地址或curl路径必填 \n")
-		fmt.Printf("当前请求参数: -c %d -n %d -d %v -u %s \n", concurrency, totalNumber, debugStr, requestURL)
+		fmt.Printf("当前请求参数: -c %d -n %d -d %v -u %s -sign %v -partner %v -secret %v \n", concurrency, totalNumber, debugStr, requestURL, sign, partnerId, secretStr)
 		flag.Usage()
 		return
 	}
 	debug := strings.ToLower(debugStr) == "true"
-	request, err := model.NewRequest(requestURL, verify, code, 0, debug, path, headers, body, maxCon, http2, keepalive)
-	if err != nil {
-		fmt.Printf("参数不合法 %v \n", err)
-		return
+	signFlag := strings.ToLower(sign) == "true"
+	if signFlag {
+		fmt.Printf("当前请求参数: -c %d -n %d -d %v -u %s -sign %v -partner %v -secret %v -data %v \n", concurrency, totalNumber, debugStr, requestURL, sign, partnerId, secretStr, body)
+		var data map[string]interface{}
+		if strings.TrimSpace(path) == "" {
+			err := json.Unmarshal([]byte(body), &data)
+			if err != nil {
+				fmt.Println("解析JSON时出错：", err)
+				return
+			}
+		}
+		request, err := model.NewSignRequest(totalNumber, path, requestURL, verify, code, 0, debug, headers, partnerId, secretStr, data, maxCon, http2, keepalive)
+		if err != nil {
+			fmt.Printf("参数不合法 %v \n", err)
+			return
+		}
+		fmt.Printf("\n 开始启动  并发数:%d 请求数:%d\n", concurrency, totalNumber)
+		// 开始处理
+		server.Dispose(concurrency, totalNumber, nil, request)
+	} else {
+		request, err := model.NewRequest(requestURL, verify, code, 0, debug, path, headers, body, maxCon, http2, keepalive)
+		if err != nil {
+			fmt.Printf("参数不合法 %v \n", err)
+			return
+		}
+		fmt.Printf("\n 开始启动  并发数:%d 请求数:%d 请求参数: \n", concurrency, totalNumber)
+		request.Print()
+		// 开始处理
+		server.Dispose(concurrency, totalNumber, request, nil)
 	}
-	fmt.Printf("\n 开始启动  并发数:%d 请求数:%d 请求参数: \n", concurrency, totalNumber)
-	request.Print()
-	// 开始处理
-	server.Dispose(concurrency, totalNumber, request)
 	return
 }
