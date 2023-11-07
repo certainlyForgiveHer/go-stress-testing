@@ -15,20 +15,36 @@ func HTTP(chanID uint64, ch chan<- *model.RequestResults, totalNumber uint64, wg
 	defer func() {
 		wg.Done()
 	}()
-	// fmt.Printf("启动协程 编号:%05d \n", chanID)
-	for i := uint64(0); i < totalNumber; i++ {
-		list := getRequestList(request)
-		isSucceed, errCode, requestTime, contentLength := sendList(list)
-		requestResults := &model.RequestResults{
-			Time:          requestTime,
-			IsSucceed:     isSucceed,
-			ErrCode:       errCode,
-			ReceivedBytes: contentLength,
+	if request != nil {
+		// fmt.Printf("启动协程 编号:%05d \n", chanID)
+		for i := uint64(0); i < totalNumber; i++ {
+			list := getRequestList(request)
+			isSucceed, errCode, requestTime, contentLength := sendList(list)
+			requestResults := &model.RequestResults{
+				Time:          requestTime,
+				IsSucceed:     isSucceed,
+				ErrCode:       errCode,
+				ReceivedBytes: contentLength,
+			}
+			requestResults.SetID(chanID, i)
+			ch <- requestResults
 		}
-		requestResults.SetID(chanID, i)
+		return
+	}
+	for e := uint64(0); e < uint64(len(requestList)); e++ {
+		succeed, code, u, length := send(requestList[e])
+		requestResults := &model.RequestResults{
+			Time:          u,
+			IsSucceed:     succeed,
+			ErrCode:       code,
+			ReceivedBytes: length,
+		}
+		if succeed == false {
+			break
+		}
+		requestResults.SetID(chanID, e)
 		ch <- requestResults
 	}
-
 	return
 }
 

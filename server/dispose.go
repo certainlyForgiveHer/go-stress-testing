@@ -29,6 +29,23 @@ func init() {
 	model.RegisterVerifyWebSocket("json", verify.WebSocketJSON)
 }
 
+func GroupData(ch <-chan *model.Request, groupSize int) [][]*model.Request {
+	result := make([][]*model.Request, 0)
+	group := make([]*model.Request, 0)
+	for i := range ch {
+		group = append(group, i)
+
+		if len(group) == groupSize {
+			result = append(result, group)
+			group = make([]*model.Request, 0)
+		}
+	}
+	if len(group) > 0 {
+		result = append(result, group)
+	}
+	return result
+}
+
 // Dispose 处理函数
 func Dispose(concurrency, totalNumber uint64, request *model.Request, requestList []*model.Request) {
 	// 设置接收数据缓存
@@ -36,25 +53,39 @@ func Dispose(concurrency, totalNumber uint64, request *model.Request, requestLis
 	var (
 		wg          sync.WaitGroup // 发送数据完成
 		wgReceiving sync.WaitGroup // 数据处理完成
+		req         *model.Request
+		reqList     [][]*model.Request
 	)
-
+	req = request
 	//数组形式时，用第一个请求建立链接 默认全部为同样的地址
-	if request == nil {
-		request = requestList[0]
+	if req == nil {
+		req = requestList[0]
 	}
 
 	wgReceiving.Add(1)
 	go statistics.ReceivingResults(concurrency, ch, &wgReceiving)
 
-	if request.Keepalive {
-		httplongclinet.CreateLangHttpClient(request)
+	if req.Keepalive {
+		httplongclinet.CreateLangHttpClient(req)
+	}
+	if requestList != nil {
+		chReq := make(chan *model.Request)
+		go func() {
+			defer close(chReq)
+			for _, element := range requestList {
+				chReq <- element
+			}
+		}()
+		//拆分
+		size := len(requestList) / int(concurrency)
+		reqList = GroupData(chReq, size)
 	}
 
 	for i := uint64(0); i < concurrency; i++ {
 		wg.Add(1)
-		switch request.Form {
+		switch req.Form {
 		case model.FormTypeHTTP:
-			go golink.HTTP(i, ch, totalNumber, &wg, request, requestList)
+			go golink.HTTP(i, ch, totalNumber, &wg, request, reqList[i])
 			break
 		case model.FormTypeWebSocket:
 			switch connectionMode {

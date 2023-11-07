@@ -202,17 +202,12 @@ func NewSignRequest(totalNumber uint64, path string, url string, verify string, 
 			return
 		}
 	}
+	//直到所有数据执行完毕前，阻塞
+	wg.Add(int(totalNumber))
 	go func() {
+		//fixme 是否要关闭生产端
 		defer close(ch)
-		for i := range ch {
-			slice = append(slice, i)
-		}
-	}()
-
-	for i := uint64(0); i < totalNumber; i++ {
-		wg.Add(1)
-		go func(i uint64) {
-			defer wg.Done()
+		for i := uint64(0); i < totalNumber; i++ {
 			uid := uuid.New().String()
 			times := time.Now().Unix()
 			timestampStr := fmt.Sprintf("%d", times)
@@ -255,9 +250,19 @@ func NewSignRequest(totalNumber uint64, path string, url string, verify string, 
 				Code:      code,
 			}
 			ch <- req
-		}(i)
-	}
-
+		}
+	}()
+	go func() {
+		for {
+			e, ok := <-ch
+			if ok {
+				slice = append(slice, e)
+				wg.Done()
+				continue
+			}
+			break
+		}
+	}()
 	wg.Wait()
 	return slice, nil
 }
