@@ -1,3 +1,0 @@
-curl 'http://aiis-api-gateway-dev.10.181.71.80.nip.io/aiis/api/insapp-service/pub50/crm/buy-suggestion?satoken=8ca3b4d3-df19-40d5-a679-e8932f6e54b7' \
---header 'Content-Type: application/json' \
---data '{"portfolioId":"005FC2382F366815E0630CA7320AFD66","portfolioType":"8"}'
