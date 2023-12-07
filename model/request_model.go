@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -149,7 +150,7 @@ func NewSignRequest(totalNumber uint64, path string, url string, verify string, 
 		bodyString := curl.GetBody()
 		errJ := json.Unmarshal([]byte(bodyString), &reqBody)
 		if errJ != nil {
-			fmt.Printf("解析JSON时出错：%v\n%v\n", bodyString, errJ)
+			log.Printf("解析JSON时出错：%v\n%v\n", bodyString, errJ)
 			return
 		}
 	}

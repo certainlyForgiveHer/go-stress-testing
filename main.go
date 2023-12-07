@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"go-stress-testing/model"
 	"go-stress-testing/server"
+	"log"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // array 自定义数组参数
@@ -36,12 +38,14 @@ var (
 	headers     array             // 自定义头信息传递给服务器
 	body        = ""              // HTTP POST方式传送数据
 	maxCon      = 1               // 单个连接最大请求数
+	maxProcess  = 0               //最大CPU并发
 	code        = 200             //成功状态码
 	http2       = false           // 是否开http2.0
 	keepalive   = false           // 是否开启长连接
 	sign        = "false"
 	partnerId   = ""
 	secretStr   = ""
+	signGen     = "false"
 )
 
 func init() {
@@ -54,12 +58,14 @@ func init() {
 	flag.Var(&headers, "H", "自定义头信息传递给服务器 示例:-H 'Content-Type: application/json'")
 	flag.StringVar(&body, "data", body, "HTTP POST方式传送数据")
 	flag.IntVar(&maxCon, "m", maxCon, "单个host最大连接数")
+	flag.IntVar(&maxProcess, "mp", maxProcess, "最大CPU并发")
 	flag.IntVar(&code, "code", code, "请求成功的状态码")
 	flag.BoolVar(&http2, "http2", http2, "是否开http2.0")
 	flag.BoolVar(&keepalive, "k", keepalive, "是否开启长连接")
 	flag.StringVar(&partnerId, "partner", partnerId, "合作方编号")
 	flag.StringVar(&secretStr, "secret", secretStr, "秘钥")
 	flag.StringVar(&sign, "sign", sign, "是否为验签请求")
+	flag.StringVar(&signGen, "sg", signGen, "是否为仅生成验签请求")
 	// 解析参数
 	flag.Parse()
 }
@@ -69,41 +75,71 @@ func init() {
 //
 //go:generate go build main.go
 func main() {
-	runtime.GOMAXPROCS(1)
+	if maxProcess != 0 {
+		runtime.GOMAXPROCS(maxProcess)
+	}
+	log.Printf("max process cpu:%v", runtime.NumCPU())
 	if concurrency == 0 || totalNumber == 0 || (requestURL == "" && path == "") {
-		fmt.Printf("示例: go run main.go -c 1 -n 1 -u -sign -d -partner CRM -secret 0cb4521f6723215fec1s4f9f9a756y31 https://www.baidu.com/ \n")
-		fmt.Printf("压测地址或curl路径必填 \n")
-		fmt.Printf("当前请求参数: -c %d -n %d -d %v -u %s -sign %v -partner %v -secret %v \n", concurrency, totalNumber, debugStr, requestURL, sign, partnerId, secretStr)
+		log.Printf("示例: go-stress-testing.exe -p ./curl/test.post.curl.txt -sign 'true' -partner 'CRM' -secret '0cb4521f6723215fec1s4f9f9a756y31' -c 10 -n 20\n")
+		log.Printf("压测地址或curl路径必填 \n")
+		log.Printf("当前请求参数: -c %d -n %d -d %v -u %s -sign %v -partner %v -secret %v \n", concurrency, totalNumber, debugStr, requestURL, sign, partnerId, secretStr)
 		flag.Usage()
 		return
 	}
+	signGenFlag := strings.ToLower(signGen) == "true"
 	debug := strings.ToLower(debugStr) == "true"
 	signFlag := strings.ToLower(sign) == "true"
-	if signFlag {
-		fmt.Printf("当前请求参数: -c %d -n %d -d %v -u %s -sign %v -partner %v -secret %v -data %v \n", concurrency, totalNumber, debugStr, requestURL, sign, partnerId, secretStr, body)
+	if signGenFlag {
+		var wg sync.WaitGroup
 		var data map[string]interface{}
 		if strings.TrimSpace(path) == "" {
 			err := json.Unmarshal([]byte(body), &data)
 			if err != nil {
-				fmt.Println("解析JSON时出错：", err)
+				log.Println("解析JSON时出错：", err)
 				return
 			}
 		}
 		request, err := model.NewSignRequest(totalNumber, path, requestURL, verify, code, 0, debug, headers, partnerId, secretStr, data, maxCon, http2, keepalive)
 		if err != nil {
-			fmt.Printf("参数不合法 %v \n", err)
+			log.Printf("参数不合法 %v \n", err)
 			return
 		}
-		fmt.Printf("\n 开始启动  并发数:%d 请求数:%d\n", concurrency, totalNumber)
+		wg.Add(len(request))
+		for _, req := range request {
+			req := req
+			go func() {
+				log.Printf("request:%v\n", req)
+				wg.Done()
+			}()
+		}
+		wg.Wait()
+		return
+	}
+	if signFlag {
+		log.Printf("当前请求参数: -c %d -n %d -d %v -u %s -sign %v -partner %v -secret %v -data %v \n", concurrency, totalNumber, debugStr, requestURL, sign, partnerId, secretStr, body)
+		var data map[string]interface{}
+		if strings.TrimSpace(path) == "" {
+			err := json.Unmarshal([]byte(body), &data)
+			if err != nil {
+				log.Println("解析JSON时出错：", err)
+				return
+			}
+		}
+		request, err := model.NewSignRequest(totalNumber, path, requestURL, verify, code, 0, debug, headers, partnerId, secretStr, data, maxCon, http2, keepalive)
+		if err != nil {
+			log.Printf("参数不合法 %v \n", err)
+			return
+		}
+		log.Printf("\n 开始启动  并发数:%d 请求数:%d\n", concurrency, totalNumber)
 		// 开始处理
 		server.Dispose(concurrency, totalNumber, nil, request)
 	} else {
 		request, err := model.NewRequest(requestURL, verify, code, 0, debug, path, headers, body, maxCon, http2, keepalive)
 		if err != nil {
-			fmt.Printf("参数不合法 %v \n", err)
+			log.Printf("参数不合法 %v \n", err)
 			return
 		}
-		fmt.Printf("\n 开始启动  并发数:%d 请求数:%d 请求参数: \n", concurrency, totalNumber)
+		log.Printf("\n 开始启动  并发数:%d 请求数:%d 请求参数: \n", concurrency, totalNumber)
 		request.Print()
 		// 开始处理
 		server.Dispose(concurrency, totalNumber, request, nil)

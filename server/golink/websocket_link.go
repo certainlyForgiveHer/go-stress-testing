@@ -4,6 +4,7 @@ package golink
 import (
 	"fmt"
 	"go-stress-testing/server/statistics"
+	"log"
 	"sync"
 	"time"
 
@@ -83,7 +84,7 @@ func webSocketRequest(chanID uint64, ch chan<- *model.RequestResults, i uint64, 
 		msg, err = ws.Read()
 		if err != nil {
 			errCode = model.ParseError
-			fmt.Println("读取数据 失败~")
+			log.Println("读取数据 失败")
 		} else {
 			errCode, isSucceed = request.GetVerifyWebSocket()(request, seq, msg)
 		}
